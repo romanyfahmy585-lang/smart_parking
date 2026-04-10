@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>Smart Parking System</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e0e0e0;
+      padding: 24px;
+    }
+
+    /* ── Header ─────────────────────────────── */
+    .header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .header img {
+      width: 70px;
+      height: 70px;
+      border-radius: 50%;
+      margin-bottom: 10px;
+      object-fit: cover;
+    }
+
+    .header h1 {
+      font-size: 26px;
+      color: #4fc3f7;
+    }
+
+    .header p {
+      color: #666;
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    /* ── Stats ──────────────────────────────── */
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 32px;
+      flex-wrap: wrap;
+    }
+
+    .stat-box {
+      background: #1e2130;
+      border-radius: 12px;
+      padding: 14px 24px;
+      text-align: center;
+      min-width: 110px;
+    }
+
+    .stat-box .num { font-size: 34px; font-weight: bold; }
+    .stat-box .lbl { font-size: 12px; color: #888; margin-top: 4px; }
+    .green { color: #66bb6a; }
+    .red   { color: #ef5350; }
+    .orange{ color: #ffa726; }
+    .blue  { color: #4fc3f7; }
+
+    /* ── Slots Grid ─────────────────────────── */
+    .slots-title {
+      text-align: center;
+      font-size: 16px;
+      color: #888;
+      margin-bottom: 16px;
+      letter-spacing: 1px;
+    }
+
+    .slots-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      max-width: 720px;
+      margin: 0 auto 40px;
+    }
+
+    .slot-card {
+      border-radius: 18px;
+      padding: 28px 16px 20px;
+      text-align: center;
+      transition: transform 0.2s, box-shadow 0.2s;
+      position: relative;
+    }
+
+    .slot-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+
+    /* حالات */
+    .slot-free {
+      background: linear-gradient(145deg, #1b3a2d, #1e4a35);
+      border: 2px solid #66bb6a;
+    }
+
+    .slot-reserved {
+      background: linear-gradient(145deg, #2d2a1a, #3a3420);
+      border: 2px solid #ffa726;
+    }
+
+    .slot-occupied {
+      background: linear-gradient(145deg, #2d1a1a, #3a2020);
+      border: 2px solid #ef5350;
+    }
+
+    .slot-icon {
+      font-size: 42px;
+      margin-bottom: 10px;
+    }
+
+    .slot-num {
+      font-size: 15px;
+      font-weight: bold;
+      color: #aaa;
+      margin-bottom: 8px;
+    }
+
+    .slot-status {
+      font-size: 17px;
+      font-weight: bold;
+    }
+
+    .slot-free     .slot-status { color: #66bb6a; }
+    .slot-reserved .slot-status { color: #ffa726; }
+    .slot-occupied .slot-status { color: #ef5350; }
+
+    .slot-name {
+      font-size: 12px;
+      color: #888;
+      margin-top: 6px;
+      min-height: 18px;
+    }
+
+    /* نبضة عشان يبين إنه live */
+    .live-dot {
+      display: inline-block;
+      width: 9px; height: 9px;
+      background: #66bb6a;
+      border-radius: 50%;
+      margin-left: 6px;
+      animation: pulse 1.5s infinite;
+      vertical-align: middle;
+    }
+
+    @keyframes pulse {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    /* ── Form ───────────────────────────────── */
+    .form-section {
+      max-width: 500px;
+      margin: 0 auto 36px;
+      background: #1e2130;
+      border-radius: 16px;
+      padding: 24px;
+    }
+
+    .form-section h2 {
+      margin-bottom: 18px;
+      color: #4fc3f7;
+      font-size: 17px;
+    }
+
+    .form-section input {
+      width: 100%;
+      padding: 11px 14px;
+      margin-bottom: 12px;
+      border-radius: 8px;
+      border: 1px solid #2a2d3e;
+      background: #0f1117;
+      color: #e0e0e0;
+      font-size: 14px;
+      font-family: 'Segoe UI', sans-serif;
+    }
+
+    .form-section input:focus {
+      outline: none;
+      border-color: #4fc3f7;
+    }
+
+    .form-section button {
+      width: 100%;
+      padding: 13px;
+      background: #1a56b0;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      cursor: pointer;
+      font-weight: bold;
+      font-family: 'Segoe UI', sans-serif;
+      transition: background 0.2s;
+    }
+
+    .form-section button:hover { background: #1d6ad4; }
+
+    #result {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: none;
+      text-align: center;
+    }
+
+    .result-ok  { background: #1b3a2d; color: #66bb6a; display: block !important; }
+    .result-err { background: #2d1a1a; color: #ef5350; display: block !important; }
+
+    /* ── Logs ───────────────────────────────── */
+    .logs-section {
+      max-width: 720px;
+      margin: 0 auto;
+      background: #1e2130;
+      border-radius: 16px;
+      padding: 20px;
+    }
+
+    .logs-section h2 {
+      color: #4fc3f7;
+      margin-bottom: 14px;
+      font-size: 17px;
+    }
+
+    .log-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 0;
+      border-bottom: 1px solid #2a2d3e;
+      font-size: 13px;
+      gap: 10px;
+    }
+
+    .log-action {
+      color: #ffa726;
+      font-weight: bold;
+      width: 85px;
+      flex-shrink: 0;
+    }
+
+    .log-msg  { color: #ccc; flex: 1; }
+    .log-time { color: #555; font-size: 11px; flex-shrink: 0; }
+
+    .no-logs { color: #555; font-size: 13px; text-align: center; padding: 16px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────── -->
+<div class="header">
+  <!--
+    عشان تحط لوجو الجامعة:
+    1. حط صورة الجامعة في نفس فولدر المشروع
+    2. غير "logo.png" لاسم الصورة بتاعتك
+  -->
+  <img src="/static/logo.png" alt="logo"
+       onerror="this.style.display='none'">
+  <h1>🅿 Smart Parking System</h1>
+  <p>
+    <span class="live-dot"></span>
+    يتحدث تلقائياً كل 3 ثواني
+  </p>
+</div>
+
+<!-- ── Stats ───────────────────────────────────── -->
+<div class="stats">
+  <div class="stat-box">
+    <div class="num blue" id="stat-total">6</div>
+    <div class="lbl">إجمالي الأماكن</div>
+  </div>
+  <div class="stat-box">
+    <div class="num green" id="stat-free">—</div>
+    <div class="lbl">✅ فاضي</div>
+  </div>
+  <div class="stat-box">
+    <div class="num orange" id="stat-res">—</div>
+    <div class="lbl">⏳ محجوز</div>
+  </div>
+  <div class="stat-box">
+    <div class="num red" id="stat-occ">—</div>
+    <div class="lbl">🔴 مشغول</div>
+  </div>
+</div>
+
+<!-- ── Slots ────────────────────────────────────── -->
+<p class="slots-title">حالة الأماكن</p>
+<div class="slots-grid" id="slots-grid">
+  <!-- بيتعمل أوتوماتيك من JavaScript -->
+</div>
+
+<!-- ── Form ─────────────────────────────────────── -->
+<div class="form-section">
+  <h2>📋 حجز مكان جديد</h2>
+  <input type="text"  id="inp-nfc"   placeholder="NFC UID — مثال: A3:4F:22:01">
+  <input type="text"  id="inp-name"  placeholder="الاسم (اختياري)">
+  <input type="text"  id="inp-phone" placeholder="رقم الهاتف (اختياري)">
+  <button onclick="doReserve()">احجز الآن</button>
+  <div id="result"></div>
+</div>
+
+<!-- ── Logs ──────────────────────────────────────── -->
+<div class="logs-section">
+  <h2>📜 آخر العمليات</h2>
+  <div id="logs-list">
+    <p class="no-logs">لا توجد عمليات بعد</p>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════
+// جيب حالة الأماكن من السيرفر وارسم الكروت
+// ═══════════════════════════════════════════════════
+async function fetchStatus() {
+  try {
+    const res  = await fetch('/status');
+    const data = await res.json();
+
+    // حدّث الأرقام
+    document.getElementById('stat-total').textContent = data.total;
+    document.getElementById('stat-free').textContent  = data.available;
+    document.getElementById('stat-occ').textContent   = data.occupied;
+
+    // احسب المحجوزين
+    const reserved = data.slots.filter(s => s.status === 'reserved').length;
+    document.getElementById('stat-res').textContent = reserved;
+
+    // ارسم الكروت
+    const grid = document.getElementById('slots-grid');
+    grid.innerHTML = '';
+
+    data.slots.forEach(slot => {
+      // الأيقونة والكلاس على حسب الحالة
+      const config = {
+        free:     { cls: 'slot-free',     icon: '🟢', label: 'فاضي' },
+        reserved: { cls: 'slot-reserved', icon: '🟡', label: 'محجوز' },
+        occupied: { cls: 'slot-occupied', icon: '🔴', label: 'مشغول' },
+      }[slot.status] || { cls: 'slot-free', icon: '🟢', label: 'فاضي' };
+
+      grid.innerHTML += `
+        <div class="slot-card ${config.cls}">
+          <div class="slot-icon">${config.icon}</div>
+          <div class="slot-num">مكان ${slot.slot_number}</div>
+          <div class="slot-status">${config.label}</div>
+          <div class="slot-name">${
+            slot.occupant !== '—' ? slot.occupant : ''
+          }</div>
+        </div>
+      `;
+    });
+
+  } catch(e) {
+    console.error('خطأ:', e);
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// جيب آخر العمليات
+// ═══════════════════════════════════════════════════
+async function fetchLogs() {
+  try {
+    const res  = await fetch('/logs');
+    const logs = await res.json();
+    const list = document.getElementById('logs-list');
+
+    if (logs.length === 0) {
+      list.innerHTML = '<p class="no-logs">لا توجد عمليات بعد</p>';
+      return;
+    }
+
+    list.innerHTML = '';
+    logs.forEach(log => {
+      const time = new Date(log.timestamp).toLocaleTimeString('ar-EG');
+      list.innerHTML += `
+        <div class="log-item">
+          <span class="log-action">${log.action}</span>
+          <span class="log-msg">${log.message}</span>
+          <span class="log-time">${time}</span>
+        </div>
+      `;
+    });
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════
+// عمل حجز جديد
+// ═══════════════════════════════════════════════════
+async function doReserve() {
+  const nfc_id = document.getElementById('inp-nfc').value.trim().toUpperCase();
+  const name   = document.getElementById('inp-name').value.trim();
+  const phone  = document.getElementById('inp-phone').value.trim();
+
+  if (!nfc_id) {
+    showResult('❌ لازم تكتب NFC UID', false);
+    return;
+  }
+
+  try {
+    const res  = await fetch('/reserve', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ nfc_id, name, phone })
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      showResult(`✅ تم الحجز — مكان رقم ${data.slot_number}`, true);
+      document.getElementById('inp-nfc').value   = '';
+      document.getElementById('inp-name').value  = '';
+      document.getElementById('inp-phone').value = '';
+      fetchStatus();
+      fetchLogs();
+    } else {
+      showResult(`❌ ${data.message}`, false);
+    }
+  } catch(e) {
+    showResult('❌ مفيش اتصال بالسيرفر', false);
+  }
+}
+
+function showResult(msg, ok) {
+  const el = document.getElementById('result');
+  el.textContent = msg;
+  el.className   = ok ? 'result-ok' : 'result-err';
+  setTimeout(() => {
+    el.className   = '';
+    el.style.display = 'none';
+  }, 4000);
+}
+
+// ── شغّل أول ما الصفحة تفتح ────────────────────
+fetchStatus();
+fetchLogs();
+
+// ── كرر كل 3 ثواني ──────────────────────────────
+setInterval(fetchStatus, 3000);
+setInterval(fetchLogs,   5000);
+</script>
+
+</body>
+</html>
