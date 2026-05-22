@@ -1,0 +1,180 @@
+#include <Servo.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// ═══════════════════════════════════════
+// LCD
+// ═══════════════════════════════════════
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// ═══════════════════════════════════════
+// Servo
+// ═══════════════════════════════════════
+Servo myservo;
+
+// ═══════════════════════════════════════
+// IR Sensors
+// ═══════════════════════════════════════
+#define ir_enter 2
+#define ir_back  4
+
+#define ir_car1 5
+#define ir_car2 6
+#define ir_car3 7
+#define ir_car4 8
+#define ir_car5 9
+#define ir_car6 10
+
+// ═══════════════════════════════════════
+// Variables
+// ═══════════════════════════════════════
+int S1 = 0, S2 = 0, S3 = 0;
+int S4 = 0, S5 = 0, S6 = 0;
+
+int slot = 6;
+
+bool entryBusy = false;
+bool exitBusy  = false;
+
+int lastS1 = -1, lastS2 = -1, lastS3 = -1;
+int lastS4 = -1, lastS5 = -1, lastS6 = -1;
+
+unsigned long lastDisplayTime = 0;
+int displayPage = 0;
+#define DISPLAY_INTERVAL 1200
+
+// ═══════════════════════════════════════
+// Setup
+// ═══════════════════════════════════════
+void setup() {
+
+  Serial.begin(9600);
+
+  pinMode(ir_enter, INPUT_PULLUP);
+  pinMode(ir_back,  INPUT_PULLUP);
+
+  pinMode(ir_car1, INPUT_PULLUP);
+  pinMode(ir_car2, INPUT_PULLUP);
+  pinMode(ir_car3, INPUT_PULLUP);
+  pinMode(ir_car4, INPUT_PULLUP);
+  pinMode(ir_car5, INPUT_PULLUP);
+  pinMode(ir_car6, INPUT_PULLUP);
+
+  myservo.attach(3);
+  myservo.write(0);
+
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Smart Parking");
+  lcd.setCursor(0, 1);
+  lcd.print("System Ready");
+  delay(2000);
+  lcd.clear();
+}
+
+// ═══════════════════════════════════════
+// Read Sensors
+// ═══════════════════════════════════════
+void Read_Sensor() {
+  S1 = (digitalRead(ir_car1) == LOW) ? 1 : 0;
+  S2 = (digitalRead(ir_car2) == LOW) ? 1 : 0;
+  S3 = (digitalRead(ir_car3) == LOW) ? 1 : 0;
+  S4 = (digitalRead(ir_car4) == LOW) ? 1 : 0;
+  S5 = (digitalRead(ir_car5) == LOW) ? 1 : 0;
+  S6 = (digitalRead(ir_car6) == LOW) ? 1 : 0;
+}
+
+void Display_LCD() {
+
+  if (millis() - lastDisplayTime < DISPLAY_INTERVAL) return;
+  lastDisplayTime = millis();
+
+  lcd.clear();
+
+  if (displayPage == 0) {
+
+    lcd.setCursor(0, 0);
+    if (slot == 0) lcd.print("Parking Full  ");
+    else { lcd.print("Free Slot: "); lcd.print(slot); lcd.print("  "); }
+
+    lcd.setCursor(0, 1);
+    lcd.print("S1:"); lcd.print(S1 ? "F " : "E ");
+    lcd.print("S2:"); lcd.print(S2 ? "F " : "E ");
+    lcd.print("S3:"); lcd.print(S3 ? "F " : "E ");
+
+    displayPage = 1;
+
+  } else {
+
+    lcd.setCursor(0, 0);
+    if (slot == 0) lcd.print("No Entry!     ");
+    else { lcd.print("Free Slot: "); lcd.print(slot); lcd.print("  "); }
+
+    lcd.setCursor(0, 1);
+    lcd.print("S4:"); lcd.print(S4 ? "F " : "E ");
+    lcd.print("S5:"); lcd.print(S5 ? "F " : "E ");
+    lcd.print("S6:"); lcd.print(S6 ? "F " : "E ");
+
+    displayPage = 0;
+  }
+}
+
+// ═══════════════════════════════════════
+// Main Loop
+// ═══════════════════════════════════════
+void loop() {
+
+  Read_Sensor();
+  slot = 6 - (S1 + S2 + S3 + S4 + S5 + S6);
+
+  // ═════════ ENTRY ═════════
+  if (digitalRead(ir_enter) == LOW && !entryBusy) {
+    entryBusy = true;
+
+    Read_Sensor();
+    slot = 6 - (S1 + S2 + S3 + S4 + S5 + S6);
+
+    if (slot > 0) {
+      myservo.write(90);
+      delay(300);
+      while (digitalRead(ir_enter) == LOW);
+      delay(2000);
+      myservo.write(0);
+    }
+    else {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Parking Full");
+      lcd.setCursor(0, 1);
+      lcd.print("No Entry!");
+      delay(2000);
+      lcd.clear();
+    }
+  }
+
+  if (digitalRead(ir_enter) == HIGH) entryBusy = false;
+
+  // ═════════ EXIT ═════════
+  if (digitalRead(ir_back) == LOW && !exitBusy) {
+    exitBusy = true;
+    myservo.write(90);
+    delay(300);
+    while (digitalRead(ir_back) == LOW);
+    delay(2000);
+    myservo.write(0);
+  }
+
+  if (digitalRead(ir_back) == HIGH) exitBusy = false;
+
+  // ═════════ LCD ═════════
+  Display_LCD();
+
+  // ═════════ ESP32 ═════════
+  if (S1 != lastS1) { Serial.println(String("1:") + (S1 ? "occupied" : "free")); lastS1 = S1; }
+  if (S2 != lastS2) { Serial.println(String("2:") + (S2 ? "occupied" : "free")); lastS2 = S2; }
+  if (S3 != lastS3) { Serial.println(String("3:") + (S3 ? "occupied" : "free")); lastS3 = S3; }
+  if (S4 != lastS4) { Serial.println(String("4:") + (S4 ? "occupied" : "free")); lastS4 = S4; }
+  if (S5 != lastS5) { Serial.println(String("5:") + (S5 ? "occupied" : "free")); lastS5 = S5; }
+  if (S6 != lastS6) { Serial.println(String("6:") + (S6 ? "occupied" : "free")); lastS6 = S6; }
+}

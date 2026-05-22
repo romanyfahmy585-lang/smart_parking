@@ -1,0 +1,316 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+#include <HardwareSerial.h>
+
+// ═══════════════════════════════════════
+// Access Point Config
+// ═══════════════════════════════════════
+const char* AP_SSID = "SmartParking-Setup";
+const char* AP_PASS = "";
+const IPAddress AP_IP(192, 168, 4, 1);
+const IPAddress AP_SUBNET(255, 255, 255, 0);
+
+// ═══════════════════════════════════════
+// DNS + Web Server
+// ═══════════════════════════════════════
+DNSServer  dnsServer;
+WebServer  webServer(80);
+
+// ═══════════════════════════════════════
+// UART2
+// RX2 = GPIO11 | TX2 = GPIO12
+// ═══════════════════════════════════════
+HardwareSerial ArduinoSerial(2);
+
+// ═══════════════════════════════════════
+// Parking State
+// ═══════════════════════════════════════
+#define NUM_SLOTS 6
+String slotStatus[NUM_SLOTS + 1];
+
+// ═══════════════════════════════════════
+// HTML
+// ═══════════════════════════════════════
+const char PORTAL_HTML[] PROGMEM = R"rawhtml(
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Parking</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
+  :root {
+    --bg:     #0a0e1a;
+    --card:   #111827;
+    --border: #1e2d45;
+    --accent: #00d4ff;
+    --green:  #00ff88;
+    --red:    #ff3b5c;
+    --text:   #e2e8f0;
+    --muted:  #64748b;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Cairo', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,212,255,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .container { position:relative; z-index:1; width:100%; max-width:480px; }
+  .header { text-align:center; margin-bottom:32px; }
+  .header .icon {
+    font-size:48px; display:block; margin-bottom:8px;
+    filter: drop-shadow(0 0 16px var(--accent));
+  }
+  .header h1 {
+    font-size:28px; font-weight:900;
+    background: linear-gradient(135deg, var(--accent), var(--green));
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+  }
+  .header p { color:var(--muted); font-size:13px; margin-top:4px; }
+  .info-card {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:16px; padding:20px; margin-bottom:20px;
+    display:flex; align-items:center; gap:14px;
+  }
+  .info-card .label { color:var(--muted); font-size:12px; }
+  .info-card .value { font-size:20px; font-weight:700; color:var(--accent); letter-spacing:1px; }
+  .info-card .dot {
+    width:10px; height:10px; border-radius:50%;
+    background:var(--green); box-shadow:0 0 10px var(--green);
+    animation:pulse 1.5s infinite; flex-shrink:0;
+  }
+  @keyframes pulse {
+    0%,100% { opacity:1; transform:scale(1); }
+    50%      { opacity:.4; transform:scale(1.4); }
+  }
+  .section-title {
+    font-size:13px; color:var(--muted); margin-bottom:12px;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .refresh-btn {
+    background:none; border:1px solid var(--border); color:var(--accent);
+    padding:4px 10px; border-radius:8px; font-size:12px;
+    font-family:'Cairo',sans-serif; cursor:pointer; transition:.2s;
+  }
+  .refresh-btn:hover { background:var(--border); }
+  .slots-grid {
+    display:grid; grid-template-columns:repeat(3,1fr);
+    gap:12px; margin-bottom:24px;
+  }
+  .slot {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:14px; padding:18px 12px; text-align:center; transition:.25s;
+  }
+  .slot.free    { border-color:var(--green); box-shadow:0 0 20px rgba(0,255,136,.1); }
+  .slot.occupied{ border-color:var(--red);   box-shadow:0 0 20px rgba(255,59,92,.1); }
+  .slot-num { font-size:22px; font-weight:900; margin-bottom:6px; }
+  .slot.free     .slot-num { color:var(--green); }
+  .slot.occupied .slot-num { color:var(--red);   }
+  .slot-label { font-size:11px; color:var(--muted); }
+  .summary { display:flex; gap:12px; margin-bottom:28px; }
+  .sum-card {
+    flex:1; background:var(--card); border:1px solid var(--border);
+    border-radius:14px; padding:16px; text-align:center;
+  }
+  .sum-card .num { font-size:36px; font-weight:900; }
+  .sum-card.free-card .num { color:var(--green); }
+  .sum-card.occ-card  .num { color:var(--red);   }
+  .sum-card .lbl { font-size:12px; color:var(--muted); margin-top:2px; }
+  .footer { text-align:center; color:var(--muted); font-size:11px; }
+  .footer span { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <span class="icon">🅿️</span>
+    <h1>Smart Parking</h1>
+    <p>حالة المواقف — مباشر</p>
+  </div>
+  <div class="info-card">
+    <div class="dot"></div>
+    <div>
+      <div class="label">عنوان الجهاز (ESP32)</div>
+      <div class="value">192.168.4.1</div>
+    </div>
+  </div>
+  <div class="section-title">
+    <span>المواقف</span>
+    <button class="refresh-btn" onclick="location.reload()">↻ تحديث</button>
+  </div>
+  <div class="slots-grid" id="slots-grid"></div>
+  <div class="summary">
+    <div class="sum-card free-card">
+      <div class="num" id="free-count">-</div>
+      <div class="lbl">متاح</div>
+    </div>
+    <div class="sum-card occ-card">
+      <div class="num" id="occ-count">-</div>
+      <div class="lbl">مشغول</div>
+    </div>
+  </div>
+  <div class="footer">
+    الاتصال بـ <span>SmartParking-Setup</span><br>
+    ESP32 Access Point Mode
+  </div>
+</div>
+<script>
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const data = await r.json();
+    const grid = document.getElementById('slots-grid');
+    grid.innerHTML = '';
+    let free = 0, occ = 0;
+    Object.entries(data).forEach(([slot, status]) => {
+      const isFree = status === 'FREE';
+      if (isFree) free++; else occ++;
+      grid.innerHTML += `
+        <div class="slot ${isFree ? 'free' : 'occupied'}">
+          <div class="slot-num">${slot}</div>
+          <div class="slot-label">${isFree ? '✅ متاح' : '🚗 مشغول'}</div>
+        </div>`;
+    });
+    document.getElementById('free-count').textContent = free;
+    document.getElementById('occ-count').textContent  = occ;
+  } catch(e) { console.error(e); }
+}
+fetchStatus();
+setInterval(fetchStatus, 3000);
+</script>
+</body>
+</html>
+)rawhtml";
+
+// ═══════════════════════════════════════
+// Build JSON
+// ═══════════════════════════════════════
+String buildStatusJSON() {
+  String json = "{";
+  for (int i = 1; i <= NUM_SLOTS; i++) {
+    if (i > 1) json += ",";
+    json += "\"" + String(i) + "\":\"";
+    json += (slotStatus[i].length() ? slotStatus[i] : "FREE");
+    json += "\"";
+  }
+  json += "}";
+  return json;
+}
+
+// ═══════════════════════════════════════
+// Handlers
+// ═══════════════════════════════════════
+void handlePortal() {
+  webServer.send_P(200, "text/html", PORTAL_HTML);
+}
+
+void handleStatus() {
+  webServer.sendHeader("Access-Control-Allow-Origin", "*");
+  webServer.send(200, "application/json", buildStatusJSON());
+}
+
+void handleUpdate() {
+  if (webServer.hasArg("plain")) {
+    String body = webServer.arg("plain");
+    int si = body.indexOf("\"slot\":");
+    int ss = body.indexOf("\"status\":\"");
+    if (si != -1 && ss != -1) {
+      int slot  = body.substring(si + 7).toInt();
+      int start = ss + 10;
+      int end   = body.indexOf("\"", start);
+      String st = body.substring(start, end);
+      st.toUpperCase();
+      if (slot >= 1 && slot <= NUM_SLOTS) {
+        slotStatus[slot] = st;
+        Serial.println("Slot " + String(slot) + " = " + st);
+      }
+    }
+  }
+  webServer.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ═══════════════════════════════════════
+// Setup
+// ═══════════════════════════════════════
+void setup() {
+
+  Serial.begin(115200);
+
+  // UART2 — RX2=GPIO11, TX2=GPIO12
+  ArduinoSerial.begin(9600, SERIAL_8N1, 11, 12);
+
+  // ── Access Point ──
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(AP_IP, AP_IP, AP_SUBNET);
+  WiFi.softAP(AP_SSID, AP_PASS);
+
+  Serial.println("\n✅ AP Started");
+  Serial.print("SSID : "); Serial.println(AP_SSID);
+  Serial.print("IP   : "); Serial.println(WiFi.softAPIP());
+
+  // ── DNS Catchall ──
+  dnsServer.start(53, "*", AP_IP);
+
+  // ── Routes ──
+  webServer.on("/",                         HTTP_GET,  handlePortal);
+  webServer.on("/api/status",               HTTP_GET,  handleStatus);
+  webServer.on("/update",                   HTTP_POST, handleUpdate);
+  webServer.on("/generate_204",             HTTP_GET,  handlePortal);
+  webServer.on("/gen_204",                  HTTP_GET,  handlePortal);
+  webServer.on("/connecttest.txt",          HTTP_GET,  handlePortal);
+  webServer.on("/redirect",                 HTTP_GET,  handlePortal);
+  webServer.on("/hotspot-detect.html",      HTTP_GET,  handlePortal);
+  webServer.on("/library/test/success.html",HTTP_GET,  handlePortal);
+  webServer.on("/success.txt",              HTTP_GET,  handlePortal);
+  webServer.onNotFound(handlePortal);
+
+  webServer.begin();
+  Serial.println("✅ Web Server Running");
+}
+
+// ═══════════════════════════════════════
+// Loop
+// ═══════════════════════════════════════
+void loop() {
+
+  dnsServer.processNextRequest();
+  webServer.handleClient();
+
+  // ── Arduino UART ──
+  if (ArduinoSerial.available()) {
+    String msg = ArduinoSerial.readStringUntil('\n');
+    msg.trim();
+    Serial.println("Received: " + msg);
+
+    int colonIndex = msg.indexOf(':');
+    if (colonIndex != -1) {
+      int    slot   = msg.substring(0, colonIndex).toInt();
+      String status = msg.substring(colonIndex + 1);
+      status.trim();
+      status.toUpperCase();
+
+      if (slot >= 1 && slot <= NUM_SLOTS) {
+        slotStatus[slot] = status;
+        Serial.println("Slot " + String(slot) + " = " + status);
+      }
+    }
+  }
+}

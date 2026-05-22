@@ -1,0 +1,574 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+#include <HardwareSerial.h>
+
+// ═══════════════════════════════════════
+// Access Point Config
+// ═══════════════════════════════════════
+const char* AP_SSID = "SmartParking-Setup";
+const char* AP_PASS = "";
+const IPAddress AP_IP(192, 168, 42, 1);
+const IPAddress AP_SUBNET(255, 255, 255, 0);
+
+// ═══════════════════════════════════════
+// DNS + Web Server
+// ═══════════════════════════════════════
+DNSServer  dnsServer;
+WebServer  webServer(80);
+
+// ═══════════════════════════════════════
+// UART2
+// RX2 = GPIO16 | TX2 = GPIO17
+// ═══════════════════════════════════════
+HardwareSerial ArduinoSerial(2);
+
+// ═══════════════════════════════════════
+// Parking State
+// ═══════════════════════════════════════
+#define NUM_SLOTS 6
+String slotStatus[NUM_SLOTS + 1];
+
+// ═══════════════════════════════════════
+// HTML
+// ═══════════════════════════════════════
+const char PORTAL_HTML[] PROGMEM = R"rawhtml(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Parking</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #080b10;
+    --surface:  #0f1318;
+    --card:     #13181f;
+    --border:   #1c2530;
+    --border2:  #243040;
+    --accent:   #e8ff47;
+    --green:    #39d98a;
+    --red:      #ff4d6a;
+    --text:     #dde3ec;
+    --muted:    #4a5568;
+    --mono:     'DM Mono', monospace;
+    --display:  'Syne', sans-serif;
+  }
+
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    font-family: var(--mono);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px 16px 40px;
+    overflow-x: hidden;
+  }
+
+  /* noise texture overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 99;
+    opacity: .6;
+  }
+
+  .wrapper {
+    max-width: 500px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 24px 0 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+    animation: fadeUp .5s ease both;
+  }
+
+  .header-left h1 {
+    font-family: var(--display);
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    color: #fff;
+    line-height: 1;
+  }
+
+  .header-left p {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(57,217,138,.07);
+    border: 1px solid rgba(57,217,138,.2);
+    border-radius: 20px;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--green);
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+
+  .live-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: blink 1.4s infinite;
+  }
+
+  @keyframes blink {
+    0%,100% { opacity:1; }
+    50%      { opacity:.2; }
+  }
+
+  /* ── Bento Grid ── */
+  .bento {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 10px;
+  }
+
+  /* Summary cards */
+  .card-available {
+    grid-column: 1 / 2;
+    grid-row: 1;
+  }
+  .card-occupied {
+    grid-column: 2 / 3;
+    grid-row: 1;
+  }
+  .card-total {
+    grid-column: 3 / 4;
+    grid-row: 1;
+  }
+
+  /* Slots grid spans full width */
+  .card-slots {
+    grid-column: 1 / 4;
+    grid-row: 2;
+  }
+
+  /* Footer bar */
+  .card-footer {
+    grid-column: 1 / 4;
+    grid-row: 3;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 16px;
+    animation: fadeUp .5s ease both;
+    transition: border-color .2s;
+  }
+
+  .card:hover { border-color: var(--border2); }
+
+  .card-label {
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .card-value {
+    font-family: var(--display);
+    font-size: 42px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -2px;
+  }
+
+  .card-available .card-value { color: var(--green); }
+  .card-occupied  .card-value { color: var(--red);   }
+  .card-total     .card-value { color: var(--text);  }
+
+  .card-sub {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+
+  /* ── Slots ── */
+  .slots-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+
+  .slots-label {
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .refresh-btn {
+    background: none;
+    border: 1px solid var(--border2);
+    color: var(--muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-family: var(--mono);
+    cursor: pointer;
+    letter-spacing: .05em;
+    transition: .2s;
+  }
+  .refresh-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+  .slots-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+
+  .slot {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 10px;
+    text-align: center;
+    transition: .25s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .slot::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    border-radius: 10px 10px 0 0;
+    transition: .25s;
+  }
+
+  .slot.free {
+    border-color: rgba(57,217,138,.25);
+  }
+  .slot.free::before { background: var(--green); }
+
+  .slot.occupied {
+    border-color: rgba(255,77,106,.25);
+  }
+  .slot.occupied::before { background: var(--red); }
+
+  .slot-num {
+    font-family: var(--display);
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    margin-bottom: 4px;
+  }
+
+  .slot.free      .slot-num { color: var(--green); }
+  .slot.occupied  .slot-num { color: var(--red);   }
+
+  .slot-tag {
+    font-size: 9px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .slot.free     .slot-tag { color: rgba(57,217,138,.6); }
+  .slot.occupied .slot-tag { color: rgba(255,77,106,.6); }
+
+  /* ── Footer card ── */
+  .card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+  }
+
+  .footer-left {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: .05em;
+  }
+
+  .footer-left span {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .update-time {
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  /* ── Skeleton loader ── */
+  .skeleton {
+    background: linear-gradient(90deg, var(--surface) 25%, var(--border) 50%, var(--surface) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.2s infinite;
+    border-radius: 6px;
+    height: 60px;
+  }
+
+  @keyframes shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  @keyframes fadeUp {
+    from { opacity:0; transform:translateY(12px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+
+  .card:nth-child(1) { animation-delay: .05s; }
+  .card:nth-child(2) { animation-delay: .10s; }
+  .card:nth-child(3) { animation-delay: .15s; }
+  .card:nth-child(4) { animation-delay: .20s; }
+  .card:nth-child(5) { animation-delay: .25s; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <h1>PARKING<br>MONITOR</h1>
+      <p>Real-time slot status</p>
+    </div>
+    <div class="status-badge">
+      <div class="live-dot"></div>
+      Live
+    </div>
+  </div>
+
+  <!-- Bento -->
+  <div class="bento">
+
+    <!-- Available -->
+    <div class="card card-available">
+      <div class="card-label">Available</div>
+      <div class="card-value" id="free-count">—</div>
+      <div class="card-sub">slots free</div>
+    </div>
+
+    <!-- Occupied -->
+    <div class="card card-occupied">
+      <div class="card-label">Occupied</div>
+      <div class="card-value" id="occ-count">—</div>
+      <div class="card-sub">slots taken</div>
+    </div>
+
+    <!-- Total -->
+    <div class="card card-total">
+      <div class="card-label">Total</div>
+      <div class="card-value">6</div>
+      <div class="card-sub">capacity</div>
+    </div>
+
+    <!-- Slots -->
+    <div class="card card-slots">
+      <div class="slots-header">
+        <div class="slots-label">Slot Status</div>
+        <button class="refresh-btn" onclick="fetchStatus()">↻ Refresh</button>
+      </div>
+      <div class="slots-grid" id="slots-grid">
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="card card-footer">
+      <div class="footer-left">
+        ESP32 · <span>SmartParking-Setup</span>
+      </div>
+      <div class="update-time" id="update-time">—</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+async function fetchStatus() {
+  try {
+    const r    = await fetch('/api/status');
+    const data = await r.json();
+
+    const grid = document.getElementById('slots-grid');
+    grid.innerHTML = '';
+
+    let free = 0, occ = 0;
+
+    Object.entries(data).forEach(([slot, status]) => {
+      const isFree = status === 'FREE';
+      if (isFree) free++; else occ++;
+
+      grid.innerHTML += `
+        <div class="slot ${isFree ? 'free' : 'occupied'}">
+          <div class="slot-num">${slot}</div>
+          <div class="slot-tag">${isFree ? 'Free' : 'Taken'}</div>
+        </div>`;
+    });
+
+    document.getElementById('free-count').textContent = free;
+    document.getElementById('occ-count').textContent  = occ;
+
+    const now = new Date();
+    document.getElementById('update-time').textContent =
+      'Updated ' + now.getHours().toString().padStart(2,'0') + ':' +
+      now.getMinutes().toString().padStart(2,'0') + ':' +
+      now.getSeconds().toString().padStart(2,'0');
+
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+fetchStatus();
+setInterval(fetchStatus, 3000);
+</script>
+</body>
+</html>
+)rawhtml";
+
+// ═══════════════════════════════════════
+// Build JSON
+// ═══════════════════════════════════════
+String buildStatusJSON() {
+  String json = "{";
+  for (int i = 1; i <= NUM_SLOTS; i++) {
+    if (i > 1) json += ",";
+    json += "\"" + String(i) + "\":\"";
+    json += (slotStatus[i].length() ? slotStatus[i] : "FREE");
+    json += "\"";
+  }
+  json += "}";
+  return json;
+}
+
+// ═══════════════════════════════════════
+// Handlers
+// ═══════════════════════════════════════
+void handlePortal() {
+  webServer.send_P(200, "text/html", PORTAL_HTML);
+}
+
+void handleStatus() {
+  webServer.sendHeader("Access-Control-Allow-Origin", "*");
+  webServer.send(200, "application/json", buildStatusJSON());
+}
+
+void handleUpdate() {
+  if (webServer.hasArg("plain")) {
+    String body = webServer.arg("plain");
+    int si = body.indexOf("\"slot\":");
+    int ss = body.indexOf("\"status\":\"");
+    if (si != -1 && ss != -1) {
+      int slot  = body.substring(si + 7).toInt();
+      int start = ss + 10;
+      int end   = body.indexOf("\"", start);
+      String st = body.substring(start, end);
+      st.toUpperCase();
+      if (slot >= 1 && slot <= NUM_SLOTS) {
+        slotStatus[slot] = st;
+        Serial.println("Slot " + String(slot) + " = " + st);
+      }
+    }
+  }
+  webServer.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ═══════════════════════════════════════
+// Setup
+// ═══════════════════════════════════════
+void setup() {
+
+  Serial.begin(115200);
+
+  // UART2 — RX2=GPIO16, TX2=GPIO17
+  ArduinoSerial.begin(9600, SERIAL_8N1, 16, 17);
+
+  // ── Access Point ──
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(AP_IP, AP_IP, AP_SUBNET);
+  WiFi.softAP(AP_SSID, AP_PASS);
+
+  Serial.println("\nAP Started");
+  Serial.print("SSID : "); Serial.println(AP_SSID);
+  Serial.print("IP   : "); Serial.println(WiFi.softAPIP());
+
+  // ── DNS Catchall ──
+  dnsServer.start(53, "*", AP_IP);
+
+  // ── Routes ──
+  webServer.on("/",                         HTTP_GET,  handlePortal);
+  webServer.on("/api/status",               HTTP_GET,  handleStatus);
+  webServer.on("/update",                   HTTP_POST, handleUpdate);
+  webServer.on("/generate_204",             HTTP_GET,  handlePortal);
+  webServer.on("/gen_204",                  HTTP_GET,  handlePortal);
+  webServer.on("/connecttest.txt",          HTTP_GET,  handlePortal);
+  webServer.on("/redirect",                 HTTP_GET,  handlePortal);
+  webServer.on("/hotspot-detect.html",      HTTP_GET,  handlePortal);
+  webServer.on("/library/test/success.html",HTTP_GET,  handlePortal);
+  webServer.on("/success.txt",              HTTP_GET,  handlePortal);
+  webServer.onNotFound(handlePortal);
+
+  webServer.begin();
+  Serial.println("Web Server Running");
+}
+
+// ═══════════════════════════════════════
+// Loop
+// ═══════════════════════════════════════
+void loop() {
+
+  dnsServer.processNextRequest();
+  webServer.handleClient();
+
+  // ── Arduino UART ──
+  if (ArduinoSerial.available()) {
+    String msg = ArduinoSerial.readStringUntil('\n');
+    msg.trim();
+    Serial.println("Received: " + msg);
+
+    int colonIndex = msg.indexOf(':');
+    if (colonIndex != -1) {
+      int    slot   = msg.substring(0, colonIndex).toInt();
+      String status = msg.substring(colonIndex + 1);
+      status.trim();
+      status.toUpperCase();
+
+      if (slot >= 1 && slot <= NUM_SLOTS) {
+        slotStatus[slot] = status;
+        Serial.println("Slot " + String(slot) + " = " + status);
+      }
+    }
+  }
+}
